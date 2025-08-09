@@ -3,8 +3,14 @@ import json
 import logging
 import markdownify
 import requests
-from typing import Dict, Any
+import os
+from datetime import datetime, timedelta
+from typing import Dict, Any, Union
 from smolagents import CodeAgent, WebSearchTool, tool, OpenAIServerModel
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Logging
 logger = logging.getLogger(__name__)
@@ -66,23 +72,35 @@ class ai_agent:
             logger.warning("⚠️ System prompt dosyası bulunamadı. Default prompt kullanılıyor.")
             system_prompt = "You are a helpful AI assistant for trip planning."
 
+        # API key'i environment'dan al
+        api_key = os.getenv('OPENROUTER_API_KEY')
+        if not api_key:
+            logger.error("❌ OPENROUTER_API_KEY environment variable bulunamadı!")
+            raise ValueError("OPENROUTER_API_KEY gerekli!")
+
         # Model konfigürasyonu
         model = OpenAIServerModel(
-            model_id="google/gemini-2.5-flash",
+            model_id="google/gemini-2.5-flash",  # Daha stabil model
             api_base="https://openrouter.ai/api/v1",
-            api_key="",  # Buraya API key'inizi ekleyin
+            api_key=api_key,
             max_tokens=8000,
         )
 
         # Agent'ı oluştur
         self.agent = CodeAgent(
             instructions=system_prompt,
-            tools=[WebSearchTool(), visit_webpage],  # self.visit_webpage yerine visit_webpage
+            tools=[WebSearchTool(), visit_webpage],
             model=model,
             stream_outputs=True,
-            additional_authorized_imports=["time", "numpy", "pandas", "requests", "json", "re", "collections", "statistics", "datetime", "time", "itertools", "stat", "random", "unicodedata", "math", "re", "queue"],
+            additional_authorized_imports=[
+                "time", "numpy", "pandas", "requests", "json", "re", 
+                "collections", "statistics", "datetime", "time", 
+                "itertools", "stat", "random", "unicodedata", 
+                "math", "re", "queue"
+            ],
         )
         logger.info("✅ AI Agent başarıyla oluşturuldu")
+        
     def generate_trip_plan(self, prompt_data: Dict[str, Any]) -> str:
         """
         Verilen bilgilere dayanarak bir seyahat planı oluşturur
@@ -96,9 +114,14 @@ class ai_agent:
         try:
             logger.info(f"🎯 Seyahat planı oluşturuluyor: {prompt_data}")
             
+            # Tarih aralığını hesapla
+            start_date = datetime.strptime(prompt_data['start_date'], "%Y-%m-%d")
+            end_date = datetime.strptime(prompt_data['end_date'], "%Y-%m-%d")
+            total_days = (end_date - start_date).days + 1
+            
             # User prompt oluştur
             user_prompt = f"""
-            Lütfen aşağıdaki bilgilere göre bir seyahat planı oluştur ve sadece belirtilen JSON formatında yanıt ver:
+            Lütfen aşağıdaki bilgilere göre bir seyahat planı oluştur ve SADECE JSON formatında yanıt ver:
             
             📋 Bilgiler:
             - Kullanıcı ID: {prompt_data['user_id']}
@@ -108,117 +131,246 @@ class ai_agent:
             - Bitiş Noktası: {prompt_data['end_position']}
             - Başlangıç Tarihi: {prompt_data['start_date']}
             - Bitiş Tarihi: {prompt_data['end_date']}
+            - Toplam Gün: {total_days}
             
-            ⚠️ ÖNEMLİ: Sadece JSON formatında yanıt ver, başka açıklama ekleme!
+            ⚠️ KRİTİK: 
+            1. SADECE JSON formatında yanıt ver
+            2. JSON syntax'ının mükemmel olduğundan emin ol
+            3. Tekrar eden key'ler olmasın
+            4. Tüm virgül ve parantezler doğru olsun
+            5. final_answer() fonksiyonunu kullan
+            
+            Beklenen format:
+            {{
+              "trip": {{ ... }},
+              "daily_plan": [ ... ]
+            }}
             """
             
             logger.info("🤖 AI Agent çalıştırılıyor...")
             
-            # Agent'ı çalıştır
-            result_str = self.agent.run(user_prompt)
-            
-            logger.info(f"🧠 AI'dan gelen ham sonuç uzunluğu: {len(result_str)} karakter")
-            logger.debug(f"Ham sonuç: {result_str[:500]}...")  # İlk 500 karakteri log'la
-            
-            # JSON formatını temizle
-            cleaned_result = self._clean_json_response(result_str)
-            
-            # JSON validasyonu
+            # Agent'ı çalıştır - daha kontrollü
             try:
-                json.loads(cleaned_result)
-                logger.info("✅ JSON formatı geçerli")
-            except json.JSONDecodeError as e:
-                logger.error(f"❌ JSON format hatası: {str(e)}")
-                # Fallback JSON oluştur
-                cleaned_result = self._create_fallback_json(prompt_data)
+                result = self.agent.run(user_prompt)
+                logger.info(f"🧠 AI'dan gelen sonuç tipi: {type(result)}")
                 
-            return cleaned_result
+                # Result tipi kontrolü
+                if isinstance(result, dict):
+                    # AI doğrudan dict döndürmüş, JSON'a çevir
+                    logger.info("✅ AI dict objesi döndürdü, JSON'a çeviriliyor...")
+                    cleaned_result = json.dumps(result, ensure_ascii=False, indent=2)
+                    # Validate et
+                    if self._validate_json_structure(result):
+                        logger.info("✅ Dict objesi geçerli yapıda")
+                        return cleaned_result
+                    else:
+                        logger.warning("⚠️ Dict objesi yapısı geçersiz, fallback kullanılıyor")
+                        return self._create_fallback_json(prompt_data)
+                elif isinstance(result, str):
+                    logger.info(f"🧠 AI string döndürdü, uzunluk: {len(result)} karakter")
+                    # String ise normal extraction yap
+                    cleaned_result = self._extract_and_validate_json(result, prompt_data)
+                    return cleaned_result
+                else:
+                    logger.warning(f"⚠️ Beklenmeyen result tipi: {type(result)}")
+                    return self._create_fallback_json(prompt_data)
+                
+            except Exception as e:
+                logger.error(f"❌ AI Agent çalıştırma hatası: {str(e)}")
+                return self._create_fallback_json(prompt_data)
             
         except Exception as e:
             logger.error(f"❌ Seyahat planı oluşturma hatası: {str(e)}")
-            # Fallback JSON döndür
             return self._create_fallback_json(prompt_data)
 
-    def _clean_json_response(self, response: str) -> str:
-        """JSON yanıtını temizle ve düzenle"""
+    def _extract_and_validate_json(self, response: Union[str, dict], prompt_data: Dict[str, Any]) -> str:
+        """JSON yanıtını çıkar, temizle ve validate et"""
         try:
-            # Kod bloklarını temizle
-            if "```json" in response:
-                response = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
-                if response:
-                    response = response.group(1)
+            # Eğer zaten dict ise, direkt validate et
+            if isinstance(response, dict):
+                if self._validate_json_structure(response):
+                    return json.dumps(response, ensure_ascii=False, indent=2)
                 else:
-                    response = response.strip()
+                    logger.warning("⚠️ Dict yapısı geçersiz")
+                    return self._create_fallback_json(prompt_data)
             
-            # Başındaki ve sonundaki gereksiz karakterleri temizle
-            response = response.strip()
+            # String ise extraction yap
+            if not isinstance(response, str):
+                logger.error(f"❌ Beklenmeyen response tipi: {type(response)}")
+                return self._create_fallback_json(prompt_data)
+            # Çeşitli JSON extraction stratejileri
+            json_candidates = []
             
-            # JSON dışındaki açıklamaları temizle
-            lines = response.split('\n')
-            json_lines = []
-            in_json = False
+            # 1. Kod bloklarından çıkar
+            code_block_pattern = r'```(?:json)?\s*(.*?)\s*```'
+            matches = re.findall(code_block_pattern, response, re.DOTALL | re.IGNORECASE)
+            json_candidates.extend(matches)
             
-            for line in lines:
-                if line.strip().startswith('{') or in_json:
-                    in_json = True
-                    json_lines.append(line)
-                    if line.strip().endswith('}') and json_lines:
-                        break
+            # 2. { ile başlayan ve } ile biten blokları bul
+            brace_pattern = r'(\{.*\})'
+            matches = re.findall(brace_pattern, response, re.DOTALL)
+            json_candidates.extend(matches)
             
-            if json_lines:
-                response = '\n'.join(json_lines)
+            # 3. final_answer() içindeki JSON'u bul
+            final_answer_pattern = r'final_answer\s*\(\s*(["\'])(.*?)\1\s*\)'
+            matches = re.findall(final_answer_pattern, response, re.DOTALL)
+            if matches:
+                json_candidates.extend([match[1] for match in matches])
             
-            # Property isimlerini düzelt (quote'lar eksikse)
-            response = re.sub(r'(\w+):', r'"\1":', response)
-            response = re.sub(r'""(\w+)":', r'"\1":', response)  # Çift quote'u düzelt
+            # JSON candidates'ları dene
+            for candidate in json_candidates:
+                try:
+                    # Temizle
+                    cleaned = self._clean_json_string(candidate)
+                    
+                    # Parse dene
+                    parsed = json.loads(cleaned)
+                    
+                    # Validate et
+                    if self._validate_json_structure(parsed):
+                        logger.info("✅ Geçerli JSON bulundu ve validate edildi")
+                        return json.dumps(parsed, ensure_ascii=False, indent=2)
+                        
+                except json.JSONDecodeError:
+                    continue
+                except Exception as e:
+                    logger.debug(f"JSON candidate parse hatası: {str(e)}")
+                    continue
             
-            return response.strip()
+            # Hiçbiri işe yaramadıysa fallback
+            logger.warning("⚠️ Geçerli JSON bulunamadı, fallback oluşturuluyor")
+            return self._create_fallback_json(prompt_data)
             
         except Exception as e:
-            logger.error(f"❌ JSON temizleme hatası: {str(e)}")
-            return response
+            logger.error(f"❌ JSON extraction hatası: {str(e)}")
+            return self._create_fallback_json(prompt_data)
+
+    def _clean_json_string(self, json_str: str) -> str:
+        """JSON string'i temizle"""
+        # Başındaki ve sonundaki whitespace'leri temizle
+        json_str = json_str.strip()
+        
+        # Escape karakterleri düzelt
+        json_str = json_str.replace('\\"', '"')
+        json_str = json_str.replace("\\n", "\n")
+        json_str = json_str.replace("\\t", "\t")
+        
+        # Trailing comma'ları temizle
+        json_str = re.sub(r',\s*}', '}', json_str)
+        json_str = re.sub(r',\s*]', ']', json_str)
+        
+        return json_str
+
+    def _validate_json_structure(self, data: Dict) -> bool:
+        """JSON yapısını validate et"""
+        try:
+            # Temel yapıyı kontrol et
+            if not isinstance(data, dict):
+                return False
+                
+            if 'trip' not in data or 'daily_plan' not in data:
+                return False
+                
+            trip = data['trip']
+            daily_plan = data['daily_plan']
+            
+            # Trip validasyonu
+            required_trip_fields = ['user_id', 'name', 'description', 'start_position', 
+                                  'end_position', 'start_date', 'end_date', 'total_days']
+            for field in required_trip_fields:
+                if field not in trip:
+                    return False
+            
+            # Daily plan validasyonu
+            if not isinstance(daily_plan, list) or len(daily_plan) == 0:
+                return False
+                
+            for day in daily_plan:
+                if not isinstance(day, dict):
+                    return False
+                if 'day' not in day or 'date' not in day or 'location' not in day:
+                    return False
+                    
+                location = day['location']
+                if not isinstance(location, dict):
+                    return False
+                if 'name' not in location or 'address' not in location:
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ JSON validation hatası: {str(e)}")
+            return False
 
     def _create_fallback_json(self, prompt_data: Dict[str, Any]) -> str:
         """Hata durumunda fallback JSON oluştur"""
-        fallback_data = {
-            "trip": {
-                "user_id": prompt_data['user_id'],
-                "name": prompt_data['name'],
-                "description": prompt_data['description'],
-                "start_position": prompt_data['start_position'],
-                "end_position": prompt_data['end_position'],
-                "start_date": prompt_data['start_date'],
-                "end_date": prompt_data['end_date'],
-                "total_days": 3,
-                "route_summary": "Güzel bir kamp rotası planlandı."
-            },
-            "daily_plan": [
-                {
-                    "day": 1,
-                    "date": prompt_data['start_date'],
+        try:
+            # Tarih hesaplamaları
+            start_date = datetime.strptime(prompt_data['start_date'], "%Y-%m-%d")
+            end_date = datetime.strptime(prompt_data['end_date'], "%Y-%m-%d")
+            total_days = (end_date - start_date).days + 1
+            
+            # Günlük planlar oluştur
+            daily_plans = []
+            for day in range(min(3, total_days)):  # Maksimum 3 gün göster
+                current_date = start_date + timedelta(days=day)
+                
+                daily_plans.append({
+                    "day": day + 1,
+                    "date": current_date.strftime("%Y-%m-%d"),
                     "location": {
-                        "name": f"{prompt_data['start_position']} Kamp Alanı",
-                        "address": f"{prompt_data['start_position']} yakını",
+                        "name": f"Kamp Alanı {day + 1}",
+                        "address": f"{prompt_data['start_position']} yakını kamp alanı",
+                        "site_url": "",
+                        "latitude": 39.0 + day * 0.1,
+                        "longitude": 35.0 + day * 0.1,
+                        "notes": f"Gün {day + 1} kamp lokasyonu"
+                    }
+                })
+            
+            fallback_data = {
+                "trip": {
+                    "user_id": prompt_data['user_id'],
+                    "name": prompt_data['name'],
+                    "description": prompt_data['description'],
+                    "start_position": prompt_data['start_position'],
+                    "end_position": prompt_data['end_position'],
+                    "start_date": prompt_data['start_date'],
+                    "end_date": prompt_data['end_date'],
+                    "total_days": total_days
+                },
+                "daily_plan": daily_plans
+            }
+            
+            logger.info("🔧 Fallback JSON oluşturuldu")
+            return json.dumps(fallback_data, ensure_ascii=False, indent=2)
+            
+        except Exception as e:
+            logger.error(f"❌ Fallback JSON oluşturma hatası: {str(e)}")
+            # En basit fallback - hata durumunda bile çalışacak
+            simple_fallback = {
+                "trip": {
+                    "user_id": prompt_data.get('user_id', ''),
+                    "name": prompt_data.get('name', 'Kamp Rotası'),
+                    "description": prompt_data.get('description', 'Plan oluşturulamadı'),
+                    "start_position": prompt_data.get('start_position', ''),
+                    "end_position": prompt_data.get('end_position', ''),
+                    "start_date": prompt_data.get('start_date', ''),
+                    "end_date": prompt_data.get('end_date', ''),
+                    "total_days": 1
+                },
+                "daily_plan": [{
+                    "day": 1,
+                    "date": prompt_data.get('start_date', '2024-01-01'),
+                    "location": {
+                        "name": "Kamp Alanı",
+                        "address": "Adres bilgisi mevcut değil",
                         "site_url": "",
                         "latitude": 39.0,
                         "longitude": 35.0,
-                        "notes": "Güzel doğal kamp alanı"
+                        "notes": "Varsayılan konum"
                     }
-                },
-                {
-                    "day": 2,
-                    "date": prompt_data['end_date'],
-                    "location": {
-                        "name": f"{prompt_data['end_position']} Kamp Alanı",
-                        "address": f"{prompt_data['end_position']} yakını",
-                        "site_url": "",
-                        "latitude": 38.0,
-                        "longitude": 36.0,
-                        "notes": "Son gün kamp alanı"
-                    }
-                }
-            ]
-        }
-        
-        logger.info("🔧 Fallback JSON oluşturuldu")
-        return json.dumps(fallback_data, ensure_ascii=False, indent=2)
+                }]
+            }
+            return json.dumps(simple_fallback, ensure_ascii=False, indent=2)
