@@ -1,0 +1,14 @@
+# AI Routes Service Requirements
+
+# Minimal AI Routes Service Requirements
+# Bu dosyayı kullanırsanız Streamlit ile conflict olmaz
+
+grpcio
+grpcio-tools
+smolagents
+openai
+requests
+markdownify
+python-dotenv
+
+# Not: Protobuf ve rich otomatik olarak uyumlu versiyonlarda yüklenecek
