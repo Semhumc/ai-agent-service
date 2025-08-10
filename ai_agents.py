@@ -91,7 +91,8 @@ class ai_agent:
             instructions=system_prompt,
             tools=[WebSearchTool(), visit_webpage],
             model=model,
-            stream_outputs=True,
+            max_steps=8,
+            stream_outputs=True,    
             additional_authorized_imports=[
                 "time", "numpy", "pandas", "requests", "json", "re", 
                 "collections", "statistics", "datetime", "time", 
@@ -121,7 +122,7 @@ class ai_agent:
             
             # User prompt oluştur
             user_prompt = f"""
-            Lütfen aşağıdaki bilgilere göre bir seyahat planı oluştur ve SADECE JSON formatında yanıt ver:
+            Lütfen aşağıdaki bilgilere göre bir seyahat planı oluştur, Bu planı 8 stepte oluştur ve SADECE JSON formatında yanıt ver:
             
             📋 Bilgiler:
             - Kullanıcı ID: {prompt_data['user_id']}

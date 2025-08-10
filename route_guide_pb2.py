@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11route_guide.proto\x12\x05proto\"\x97\x01\n\rPromptRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x16\n\x0estart_position\x18\x04 \x01(\t\x12\x14\n\x0c\x65nd_position\x18\x05 \x01(\t\x12\x12\n\nstart_date\x18\x06 \x01(\t\x12\x10\n\x08\x65nd_date\x18\x07 \x01(\t\"S\n\x10TripPlanResponse\x12\x19\n\x04trip\x18\x01 \x01(\x0b\x32\x0b.proto.Trip\x12$\n\ndaily_plan\x18\x02 \x03(\x0b\x32\x10.proto.DailyPlan\"\xb9\x01\n\x04Trip\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x16\n\x0estart_position\x18\x04 \x01(\t\x12\x14\n\x0c\x65nd_position\x18\x05 \x01(\t\x12\x12\n\nstart_date\x18\x06 \x01(\t\x12\x10\n\x08\x65nd_date\x18\x07 \x01(\t\x12\x12\n\ntotal_days\x18\x08 \x01(\x05\x12\x15\n\rroute_summary\x18\t \x01(\t\"I\n\tDailyPlan\x12\x0b\n\x03\x64\x61y\x18\x01 \x01(\x05\x12\x0c\n\x04\x64\x61te\x18\x02 \x01(\t\x12!\n\x08location\x18\x03 \x01(\x0b\x32\x0f.proto.Location\"o\n\x08Location\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07\x61\x64\x64ress\x18\x02 \x01(\t\x12\x10\n\x08site_url\x18\x03 \x01(\t\x12\x10\n\x08latitude\x18\x04 \x01(\x01\x12\x11\n\tlongitude\x18\x05 \x01(\x01\x12\r\n\x05notes\x18\x06 \x01(\t2J\n\tAIService\x12=\n\x0cGeneratePlan\x12\x14.proto.PromptRequest\x1a\x17.proto.TripPlanResponseB%Z#github.com/Semhumc/grpc-proto/protob\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11route_guide.proto\x12\x05proto\"\x97\x01\n\rPromptRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x16\n\x0estart_position\x18\x04 \x01(\t\x12\x14\n\x0c\x65nd_position\x18\x05 \x01(\t\x12\x12\n\nstart_date\x18\x06 \x01(\t\x12\x10\n\x08\x65nd_date\x18\x07 \x01(\t\">\n\x13TripOptionsResponse\x12\'\n\x0ctrip_options\x18\x01 \x03(\x0b\x32\x11.proto.TripOption\"q\n\nTripOption\x12\r\n\x05theme\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x19\n\x04trip\x18\x03 \x01(\x0b\x32\x0b.proto.Trip\x12$\n\ndaily_plan\x18\x04 \x03(\x0b\x32\x10.proto.DailyPlan\"\xb9\x01\n\x04Trip\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x16\n\x0estart_position\x18\x04 \x01(\t\x12\x14\n\x0c\x65nd_position\x18\x05 \x01(\t\x12\x12\n\nstart_date\x18\x06 \x01(\t\x12\x10\n\x08\x65nd_date\x18\x07 \x01(\t\x12\x12\n\ntotal_days\x18\x08 \x01(\x05\x12\x15\n\rroute_summary\x18\t \x01(\t\"I\n\tDailyPlan\x12\x0b\n\x03\x64\x61y\x18\x01 \x01(\x05\x12\x0c\n\x04\x64\x61te\x18\x02 \x01(\t\x12!\n\x08location\x18\x03 \x01(\x0b\x32\x0f.proto.Location\"o\n\x08Location\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07\x61\x64\x64ress\x18\x02 \x01(\t\x12\x10\n\x08site_url\x18\x03 \x01(\t\x12\x10\n\x08latitude\x18\x04 \x01(\x01\x12\x11\n\tlongitude\x18\x05 \x01(\x01\x12\r\n\x05notes\x18\x06 \x01(\t2M\n\tAIService\x12@\n\x0cGeneratePlan\x12\x14.proto.PromptRequest\x1a\x1a.proto.TripOptionsResponseB%Z#github.com/Semhumc/grpc-proto/protob\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,14 +34,16 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._serialized_options = b'Z#github.com/Semhumc/grpc-proto/proto'
   _globals['_PROMPTREQUEST']._serialized_start=29
   _globals['_PROMPTREQUEST']._serialized_end=180
-  _globals['_TRIPPLANRESPONSE']._serialized_start=182
-  _globals['_TRIPPLANRESPONSE']._serialized_end=265
-  _globals['_TRIP']._serialized_start=268
-  _globals['_TRIP']._serialized_end=453
-  _globals['_DAILYPLAN']._serialized_start=455
-  _globals['_DAILYPLAN']._serialized_end=528
-  _globals['_LOCATION']._serialized_start=530
-  _globals['_LOCATION']._serialized_end=641
-  _globals['_AISERVICE']._serialized_start=643
-  _globals['_AISERVICE']._serialized_end=717
+  _globals['_TRIPOPTIONSRESPONSE']._serialized_start=182
+  _globals['_TRIPOPTIONSRESPONSE']._serialized_end=244
+  _globals['_TRIPOPTION']._serialized_start=246
+  _globals['_TRIPOPTION']._serialized_end=359
+  _globals['_TRIP']._serialized_start=362
+  _globals['_TRIP']._serialized_end=547
+  _globals['_DAILYPLAN']._serialized_start=549
+  _globals['_DAILYPLAN']._serialized_end=622
+  _globals['_LOCATION']._serialized_start=624
+  _globals['_LOCATION']._serialized_end=735
+  _globals['_AISERVICE']._serialized_start=737
+  _globals['_AISERVICE']._serialized_end=814
 # @@protoc_insertion_point(module_scope)

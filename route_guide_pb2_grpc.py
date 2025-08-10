@@ -38,7 +38,7 @@ class AIServiceStub(object):
         self.GeneratePlan = channel.unary_unary(
                 '/proto.AIService/GeneratePlan',
                 request_serializer=route__guide__pb2.PromptRequest.SerializeToString,
-                response_deserializer=route__guide__pb2.TripPlanResponse.FromString,
+                response_deserializer=route__guide__pb2.TripOptionsResponse.FromString,
                 _registered_method=True)
 
 
@@ -58,7 +58,7 @@ def add_AIServiceServicer_to_server(servicer, server):
             'GeneratePlan': grpc.unary_unary_rpc_method_handler(
                     servicer.GeneratePlan,
                     request_deserializer=route__guide__pb2.PromptRequest.FromString,
-                    response_serializer=route__guide__pb2.TripPlanResponse.SerializeToString,
+                    response_serializer=route__guide__pb2.TripOptionsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -88,7 +88,7 @@ class AIService(object):
             target,
             '/proto.AIService/GeneratePlan',
             route__guide__pb2.PromptRequest.SerializeToString,
-            route__guide__pb2.TripPlanResponse.FromString,
+            route__guide__pb2.TripOptionsResponse.FromString,
             options,
             channel_credentials,
             insecure,
