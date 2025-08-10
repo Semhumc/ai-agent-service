@@ -1,15 +1,13 @@
-import asyncio
+import re
 import json
 import logging
+import markdownify
+import requests
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Any, Union
 from smolagents import CodeAgent, WebSearchTool, tool, OpenAIServerModel
 from dotenv import load_dotenv
-import requests
-import markdownify
-import re
 
 # Load environment variables
 load_dotenv()
@@ -17,72 +15,40 @@ load_dotenv()
 # Logging
 logger = logging.getLogger(__name__)
 
-@tool
-def visit_webpage(url: str) -> str:
-    """
-    Belirtilen URL'deki web sayfasını ziyaret eder ve içeriğini markdown formatında döndürür.
-    
-    Args:
-        url (str): Ziyaret edilecek web sayfasının URL'i
-        
-    Returns:
-        str: Web sayfasının markdown formatındaki içeriği
-    """
-    try:
-        logger.info(f"🌐 Web sayfası ziyaret ediliyor: {url}")
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        markdown_content = markdownify.markdownify(response.text).strip()
-        markdown_content = re.sub(r"\n{3,}", "\n\n", markdown_content)
-        
-        if len(markdown_content) > 5000:
-            markdown_content = markdown_content[:5000] + "\n\n[İçerik kısaltıldı...]"
-        
-        logger.info(f"✅ Web sayfası başarıyla işlendi. İçerik uzunluğu: {len(markdown_content)}")
-        return markdown_content
-        
-    except Exception as e:
-        error_msg = f"Web sayfası erişim hatası: {str(e)}"
-        logger.error(f"❌ {error_msg}")
-        return error_msg
 
-class ThemeSpecialistAgent:
-    """Alt Agent - Sadece bilgi toplama ve araştırma yapar, JSON formatlamaz"""
-    
-    def __init__(self, theme_name: str, theme_description: str, specialization: str):
-        self.theme_name = theme_name
-        self.theme_description = theme_description
-        self.specialization = specialization
-        
-        # API key
+class ai_agent:
+    def __init__(self):
+        """AI Agent'ı başlat"""
+        try:
+            # System prompt'u yükle
+            with open("system_prompt.txt", "r", encoding="utf-8") as file:
+                system_prompt = file.read()
+            logger.info("✅ System prompt yüklendi")
+        except FileNotFoundError:
+            logger.warning("⚠️ System prompt dosyası bulunamadı. Default prompt kullanılıyor.")
+            system_prompt = "You are a helpful AI assistant for trip planning."
+
+        # API key'i environment'dan al
         api_key = os.getenv('OPENROUTER_API_KEY')
         if not api_key:
+            logger.error("❌ OPENROUTER_API_KEY environment variable bulunamadı!")
             raise ValueError("OPENROUTER_API_KEY gerekli!")
 
         # Model konfigürasyonu
         model = OpenAIServerModel(
-            model_id="google/gemini-2.5-flash",
+            model_id="google/gemini-2.5-flash",  # Daha stabil model
             api_base="https://openrouter.ai/api/v1",
             api_key=api_key,
-            max_tokens=4000,
+            max_tokens=8000,
         )
-
-        # Tema-specific system prompt - SADECE BİLGİ TOPLAMA
-        system_prompt = self._create_research_prompt()
 
         # Agent'ı oluştur
         self.agent = CodeAgent(
             instructions=system_prompt,
-            tools=[WebSearchTool(), visit_webpage],
+            tools=[WebSearchTool()],
             model=model,
-            max_steps=10,  # Daha az step, daha odaklı araştırma
-            stream_outputs=True,
+            max_steps=8,
+            stream_outputs=True,    
             additional_authorized_imports=[
                 "time", "numpy", "pandas", "requests", "json", "re", 
                 "collections", "statistics", "datetime", "time", 
@@ -90,504 +56,417 @@ class ThemeSpecialistAgent:
                 "math", "re", "queue"
             ],
         )
+        logger.info("✅ AI Agent başarıyla oluşturuldu")
         
-        logger.info(f"✅ {self.theme_name} Research Agent oluşturuldu")
-
-    def _create_research_prompt(self) -> str:
-        """Sadece araştırma odaklı prompt - JSON formatlamaz"""
-        return f"""# {self.theme_name} Kamp Rotası Araştırma Uzmanı
-
-Sen {self.theme_name} konusunda uzmanlaşmış bir araştırma uzmanısın.
-
-## UZMANLIK ALANI: {self.specialization}
-
-## GÖREV:
-Sadece {self.theme_name} teması için kamp alanları ARAŞTIR ve BİLGİ TOPLA. 
-JSON formatlamaya ÇALIŞMA - sadece bilgi döndür!
-
-## ARAŞTIRMA STRATEJİN:
-{self._get_theme_research_strategy()}
-
-## ÇOK ÖNEMLİ:
-- JSON formatında çıktı verme
-- final_answer() kullanma
-- Sadece bulduğun kamp alanlarının bilgilerini döndür
-- Her kamp alanı için: İsim, Adres, Web sitesi, GPS koordinatları
-
-## ARAMA YÖNTEMİ:
-1. Genel {{şehir}} camping karavan park ara
-2. "{{şehir}} çadır kamp" veya "{{şehir}}tatil köyü" ara
-3. "{{şehir}} kamp yeri" veya "{{şehir}} pansiyon kamp" ara
-4. Bulunan yerleri tek tek araştır
-5. Koordinat için "{{yer_adı}} adres konum" ara
-
-## ÇIKTI FORMATI:
-Basit metin formatında döndür:
-
-KAMP YERİ 1:
-- İsim: [Gerçek camping/karavan park adı]
-- Adres: [Tam adres]
-- Web sitesi: [URL]
-- Latitude: [koordinat]
-- Longitude: [koordinat]
-- Notlar: [Özel özellikler, aktiviteler]
-
-KAMP YERİ 2:
-- İsim: [Gerçek camping/karavan park adı]
-...
-
-ARAŞTIR VE BİLGİ TOPLA! Türkiye'de yaygın terimler:
-- Camping (en yaygın)
-- Karavan Park  
-- Tatil Köyü (kamp imkanı olan)
-- Pansiyon Kamp
-- Çadır Kamp Yeri
-- Kamp ve Karavan Parkı"""
-
-    def _get_theme_research_strategy(self) -> str:
-        """Tema-özel araştırma stratejisi"""
-        strategies = {
-            "Doğal Güzellikler Rotası": """
-ARAŞTIRMA KELİMELERİ:
-- "{şehir} camping karavan park"
-- "{şehir} çadır kamp yeri"
-- "{şehir} orman kampı"
-- "{şehir} göl kenarı camping"
-- "{lokasyon} milli park yakını kamp"
-- "doğa kampı {bölge}"
-
-ARANACAK ÖZELLIKLER:
-- Orman içi lokasyonlar
-- Göl/deniz kenarı
-- Milli park yakını
-- Doğa yürüyüşü rotaları
-            """,
-            "Tarihi Güzellikler Rotası": """
-ARAŞTIRMA KELİMELERİ:
-- "{şehir} camping tarihi yerlere yakın"
-- "{antik_kent} yakını pansiyon kamp"
-- "{müze} çevresinde camping"
-- "kültür rotası {bölge} kamp"
-- "{tarihi_yer} camping karavan"
-- "{şehir} tatil köyü tarihi"
-
-ARANACAK ÖZELLIKLER:
-- Antik kentler yakını
-- Müze çevresinde
-- Tarihi şehir merkezlerine yakın
-- Kültür rotası üzerinde
-            """,
-            "Macera ve Aksiyon Rotası": """
-ARAŞTIRMA KELİMELERİ:
-- "{şehir} dağ evi camping"
-- "{lokasyon} yayla kamp yeri"
-- "{bölge} su sporları camping"
-- "yayla kampı {dağ}"
-- "rafting {nehir} kamp"
-- "{şehir} macera turizm kamp"
-
-ARANACAK ÖZELLIKLER:
-- Dağlık alan kampları
-- Su sporları imkanı
-- Trekking rotaları yakını
-- Adrenalin sporları
-            """
-        }
-        return strategies.get(self.theme_name, "Genel araştırma stratejisi")
-
-    def research_camps(self, trip_data: Dict[str, Any]) -> str:
-        """Bu tema için kamp alanlarını araştır - SADECE BİLGİ DÖNDÜR"""
-        try:
-            logger.info(f"🎯 {self.theme_name} Research Agent çalışmaya başladı")
-            
-            # Prompt oluştur
-            user_prompt = f"""
-            {self.theme_name} teması için kamp yerleri araştır:
-            
-            📋 Rota Bilgileri:
-            - Başlangıç: {trip_data['start_position']}
-            - Bitiş: {trip_data['end_position']} 
-            - Başlangıç Tarihi: {trip_data['start_date']}
-            - Bitiş Tarihi: {trip_data['end_date']}
-            - Toplam Gün: {trip_data['total_days']}
-            
-            Türkiye'de GERÇEK camping, karavan parkı, tatil köyü, pansiyon kamp bul!
-            "kamp alanı" yerine "camping", "karavan park", "kamp yeri" terimlerini kullan!
-            JSON formatlamaya çalışma - sadece bilgi döndür!
-            """
-            
-            # Agent çalıştır
-            result = self.agent.run(user_prompt)
-            
-            logger.info(f"✅ {self.theme_name} Research Agent tamamlandı")
-            return str(result) if result else f"{self.theme_name} için araştırma tamamlanamadı."
-            
-        except Exception as e:
-            logger.error(f"❌ {self.theme_name} Research Agent hatası: {str(e)}")
-            return f"{self.theme_name} araştırması sırasında hata: {str(e)}"
-
-class MainTripPlannerAgent:
-    """Ana Agent - Bilgileri toplar ve JSON formatlar"""
-    
-    def __init__(self):
-        # Research agent'ları oluştur
-        self.researchers = {
-            "doğal": ThemeSpecialistAgent(
-                "Doğal Güzellikler Rotası",
-                "Göller, şelaleler ve ormanlık alanlar gibi doğal harikaları keşfeden bir rota.",
-                "Doğal alanlar, milli parklar, ekolojik kamp alanları"
-            ),
-            "tarihi": ThemeSpecialistAgent(
-                "Tarihi Güzellikler Rotası", 
-                "Antik kentler, kaleler ve tarihi yapılar gibi kültürel mirasları barındıran bir rota.",
-                "Tarihi mekanlar, antik kentler, kültürel rotalar"
-            ),
-            "macera": ThemeSpecialistAgent(
-                "Macera ve Aksiyon Rotası",
-                "Dağcılık, rafting, yamaç paraşütü gibi aktivitelere uygun kamp alanlarını içeren bir rota.",
-                "Adrenalin sporları, dağ aktiviteleri, su sporları"
-            )
-        }
-        
-        logger.info("✅ Main Trip Planner Agent oluşturuldu")
-        logger.info(f"📋 {len(self.researchers)} research agent hazır")
-
     def generate_trip_plan(self, prompt_data: Dict[str, Any]) -> str:
-        """Ana koordinasyon fonksiyonu - paralel araştırma ve JSON formatlama"""
-        try:
-            logger.info("🚀 Main Agent: Sıralı araştırma başlıyor...")
+        """
+        Verilen bilgilere dayanarak 3 temada seyahat planı oluşturur
+        
+        Args:
+            prompt_data (dict): Seyahat planı için gerekli bilgiler
             
-            # Tarih hesapla
+        Returns:
+            str: JSON formatında seyahat planı
+        """
+        try:
+            logger.info(f"🎯 Seyahat planı oluşturuluyor: {prompt_data}")
+            
+            # Tarih aralığını hesapla
             start_date = datetime.strptime(prompt_data['start_date'], "%Y-%m-%d")
             end_date = datetime.strptime(prompt_data['end_date'], "%Y-%m-%d")
             total_days = (end_date - start_date).days + 1
             
-            # Trip data hazırla
-            trip_data = {
-                **prompt_data,
-                'total_days': total_days
-            }
+            # User prompt oluştur
+            user_prompt = f"""
+            Lütfen aşağıdaki bilgilere göre 3 farklı temada kamp rotası planı oluştur ve SADECE JSON formatında yanıt ver:
             
-            # Research agent'larını SİRA İLE çalıştır
-            research_results = self._run_research_parallel(trip_data)  # İsim aynı kalsın ama artık sıralı
+            📋 Bilgiler:
+            - Kullanıcı ID: {prompt_data['user_id']}
+            - Plan Adı: {prompt_data['name']}
+            - Açıklama: {prompt_data['description']}
+            - Başlangıç Noktası: {prompt_data['start_position']}
+            - Bitiş Noktası: {prompt_data['end_position']}
+            - Başlangıç Tarihi: {prompt_data['start_date']}
+            - Bitiş Tarihi: {prompt_data['end_date']}
+            - Toplam Gün: {total_days}
             
-            logger.info(f"✅ Main Agent: 3 tema için araştırma tamamlandı")
+            ⚠️ KRİTİK KURALLAR: 
+            1. SADECE JSON formatında yanıt ver
+            2. MUTLAKA "trip_options" array'i içinde TAM OLARAK 3 tema oluştur
+            3. JSON syntax'ının mükemmel olduğundan emin ol
+            4. Tekrar eden key'ler olmasın
+            5. Tüm virgül ve parantezler doğru olsun
+            6. final_answer() fonksiyonunu kullan
+            7. Her temada farklı kamp alanları araştır ve gerçek bilgiler ver
             
-            # Araştırma sonuçlarını JSON'a çevir
-            final_json = self._create_json_from_research(research_results, trip_data)
+            Beklenen format:
+            {{
+              "trip_options": [
+                {{
+                  "theme": "Tema Adı",
+                  "description": "Tema açıklaması",
+                  "trip": {{ ... }},
+                  "daily_plan": [ ... ]
+                }},
+                ... 2 tema daha (toplam 3)
+              ]
+            }}
             
-            logger.info(f"✅ Main Agent: JSON formatı başarıyla oluşturuldu")
-            return final_json
+            ARAŞTIR ve GERÇEK KAMP ALANLARI BUL!
+            """
             
-        except Exception as e:
-            logger.error(f"❌ Main Agent hatası: {str(e)}")
-            return self._create_fallback_json(prompt_data)
-
-    def _run_research_parallel(self, trip_data: Dict) -> Dict[str, str]:
-        """Research agent'larını SIRA İLE çalıştır (paralel yerine)"""
-        research_results = {}
-        
-        # Sıralı çalıştırma - paralel sorunları önlemek için
-        for agent_name, agent in self.researchers.items():
+            logger.info("🤖 AI Agent çalıştırılıyor...")
+            
+            # Agent'ı çalıştır - daha kontrollü
             try:
-                logger.info(f"🔄 {agent_name} research başlatılıyor...")
-                result = agent.research_camps(trip_data)
-                research_results[agent_name] = result
-                logger.info(f"✅ {agent_name} research tamamlandı")
+                result = self.agent.run(user_prompt)
+                logger.info(f"🧠 AI'dan gelen sonuç tipi: {type(result)}")
+                
+                # Result tipi kontrolü
+                if isinstance(result, dict):
+                    # AI doğrudan dict döndürmüş, JSON'a çevir
+                    logger.info("✅ AI dict objesi döndürdü, JSON'a çeviriliyor...")
+                    cleaned_result = json.dumps(result, ensure_ascii=False, indent=2)
+                    # Validate et
+                    if self._validate_trip_options_structure(result):
+                        logger.info("✅ Dict objesi geçerli yapıda")
+                        return cleaned_result
+                    else:
+                        logger.warning("⚠️ Dict objesi yapısı geçersiz, fallback kullanılıyor")
+                        return self._create_fallback_trip_options(prompt_data)
+                elif isinstance(result, str):
+                    logger.info(f"🧠 AI string döndürdü, uzunluk: {len(result)} karakter")
+                    # String ise normal extraction yap
+                    cleaned_result = self._extract_and_validate_trip_options_json(result, prompt_data)
+                    return cleaned_result
+                else:
+                    logger.warning(f"⚠️ Beklenmeyen result tipi: {type(result)}")
+                    return self._create_fallback_trip_options(prompt_data)
+                
             except Exception as e:
-                logger.error(f"❌ {agent_name} research hatası: {str(e)}")
-                research_results[agent_name] = f"{agent_name} araştırması başarısız: {str(e)}"
-        
-        return research_results
-
-    def _create_json_from_research(self, research_results: Dict[str, str], trip_data: Dict) -> str:
-        """Araştırma sonuçlarını JSON formatına çevir"""
-        try:
-            trip_options = []
-            
-            theme_info = {
-                "doğal": {
-                    "theme": "Doğal Güzellikler Rotası",
-                    "description": "Göller, şelaleler ve ormanlık alanlar gibi doğal harikaları keşfeden bir rota."
-                },
-                "tarihi": {
-                    "theme": "Tarihi Güzellikler Rotası",
-                    "description": "Antik kentler, kaleler ve tarihi yapılar gibi kültürel mirasları barındıran bir rota."
-                },
-                "macera": {
-                    "theme": "Macera ve Aksiyon Rotası",
-                    "description": "Dağcılık, rafting, yamaç paraşütü gibi aktivitelere uygun kamp alanlarını içeren bir rota."
-                }
-            }
-            
-            for agent_name, research_text in research_results.items():
-                theme_data = theme_info.get(agent_name, {
-                    "theme": "Bilinmeyen Tema",
-                    "description": "Tema açıklaması bulunamadı"
-                })
-                
-                # Research metninden kamp bilgilerini çıkar
-                camp_info = self._extract_camp_info(research_text, trip_data)
-                
-                trip_option = {
-                    "theme": theme_data["theme"],
-                    "description": theme_data["description"],
-                    "trip": {
-                        "user_id": trip_data['user_id'],
-                        "name": f"{trip_data['name']} - {theme_data['theme']}",
-                        "description": trip_data['description'],
-                        "start_position": trip_data['start_position'],
-                        "end_position": trip_data['end_position'],
-                        "start_date": trip_data['start_date'],
-                        "end_date": trip_data['end_date'],
-                        "total_days": trip_data['total_days']
-                    },
-                    "daily_plan": camp_info
-                }
-                
-                trip_options.append(trip_option)
-            
-            final_response = {
-                "trip_options": trip_options
-            }
-            
-            return json.dumps(final_response, ensure_ascii=False, indent=2)
+                logger.error(f"❌ AI Agent çalıştırma hatası: {str(e)}")
+                return self._create_fallback_trip_options(prompt_data)
             
         except Exception as e:
-            logger.error(f"❌ JSON oluşturma hatası: {str(e)}")
-            return self._create_fallback_json(trip_data)
+            logger.error(f"❌ Seyahat planı oluşturma hatası: {str(e)}")
+            return self._create_fallback_trip_options(prompt_data)
 
-    def _extract_camp_info(self, research_text: str, trip_data: Dict) -> List[Dict]:
-        """Research metninden kamp bilgilerini çıkar"""
+    def _extract_and_validate_trip_options_json(self, response: Union[str, dict], prompt_data: Dict[str, Any]) -> str:
+        """Trip options JSON yanıtını çıkar, temizle ve validate et"""
         try:
-            daily_plans = []
+            # Eğer zaten dict ise, direkt validate et
+            if isinstance(response, dict):
+                if self._validate_trip_options_structure(response):
+                    return json.dumps(response, ensure_ascii=False, indent=2)
+                else:
+                    logger.warning("⚠️ Dict yapısı geçersiz")
+                    return self._create_fallback_trip_options(prompt_data)
             
-            # Basit regex ile kamp bilgilerini çıkarmaya çalış
-            camp_pattern = r"KAMP YERİ \d+:(.*?)(?=KAMP YERİ \d+:|$)"
-            camps = re.findall(camp_pattern, research_text, re.DOTALL | re.IGNORECASE)
+            # String ise extraction yap
+            if not isinstance(response, str):
+                logger.error(f"❌ Beklenmeyen response tipi: {type(response)}")
+                return self._create_fallback_trip_options(prompt_data)
             
-            if not camps:
-                # Alternatif pattern dene
-                lines = research_text.split('\n')
-                current_camp = {}
-                
-                for line in lines:
-                    line = line.strip()
-                    if line.lower().startswith('- i̇sim:') or line.lower().startswith('- isim:'):
-                        if current_camp:
-                            daily_plans.append(self._create_daily_plan_from_camp(current_camp, len(daily_plans) + 1, trip_data))
-                        current_camp = {'name': line.split(':', 1)[1].strip()}
-                    elif line.lower().startswith('- adres:'):
-                        current_camp['address'] = line.split(':', 1)[1].strip()
-                    elif line.lower().startswith('- web sitesi:') or line.lower().startswith('- website:'):
-                        current_camp['site_url'] = line.split(':', 1)[1].strip()
-                    elif line.lower().startswith('- latitude:'):
-                        try:
-                            current_camp['latitude'] = float(line.split(':', 1)[1].strip())
-                        except:
-                            current_camp['latitude'] = 39.0
-                    elif line.lower().startswith('- longitude:'):
-                        try:
-                            current_camp['longitude'] = float(line.split(':', 1)[1].strip())
-                        except:
-                            current_camp['longitude'] = 35.0
-                
-                # Son kamp alanını da ekle
-                if current_camp:
-                    daily_plans.append(self._create_daily_plan_from_camp(current_camp, len(daily_plans) + 1, trip_data))
+            # Çeşitli JSON extraction stratejileri
+            json_candidates = []
             
-            else:
-                # Regex ile bulunan kampları işle
-                for i, camp_text in enumerate(camps[:trip_data['total_days']]):  # Maksimum gün sayısı kadar
-                    camp_info = self._parse_camp_text(camp_text.strip())
-                    daily_plans.append(self._create_daily_plan_from_camp(camp_info, i + 1, trip_data))
+            # 1. Kod bloklarından çıkar
+            code_block_pattern = r'```(?:json)?\s*(.*?)\s*```'
+            matches = re.findall(code_block_pattern, response, re.DOTALL | re.IGNORECASE)
+            json_candidates.extend(matches)
             
-            # En az 1 günlük plan olsun
-            if not daily_plans:
-                daily_plans.append({
-                    "day": 1,
-                    "date": trip_data['start_date'],
-                    "location": {
-                        "name": "Varsayılan Kamp Alanı",
-                        "address": f"{trip_data['start_position']} yakını kamp alanı",
-                        "site_url": "",
-                        "latitude": 39.0,
-                        "longitude": 35.0
-                    }
-                })
+            # 2. { ile başlayan ve } ile biten blokları bul
+            brace_pattern = r'(\{.*\})'
+            matches = re.findall(brace_pattern, response, re.DOTALL)
+            json_candidates.extend(matches)
             
-            return daily_plans[:trip_data['total_days']]  # Maksimum gün sayısı kadar döndür
+            # 3. final_answer() içindeki JSON'u bul
+            final_answer_pattern = r'final_answer\s*\(\s*(["\'])(.*?)\1\s*\)'
+            matches = re.findall(final_answer_pattern, response, re.DOTALL)
+            if matches:
+                json_candidates.extend([match[1] for match in matches])
+            
+            # 4. final_answer() içinde JSON objesi (string olmayan)
+            final_answer_obj_pattern = r'final_answer\s*\(\s*(\{.*?\})\s*\)'
+            matches = re.findall(final_answer_obj_pattern, response, re.DOTALL)
+            json_candidates.extend(matches)
+            
+            # JSON candidates'ları dene
+            for candidate in json_candidates:
+                try:
+                    # Temizle
+                    cleaned = self._clean_json_string(candidate)
+                    
+                    # Parse dene
+                    parsed = json.loads(cleaned)
+                    
+                    # Validate et - Trip options için özel validation
+                    if self._validate_trip_options_structure(parsed):
+                        logger.info("✅ Geçerli trip options JSON bulundu ve validate edildi")
+                        return json.dumps(parsed, ensure_ascii=False, indent=2)
+                        
+                except json.JSONDecodeError:
+                    continue
+                except Exception as e:
+                    logger.debug(f"JSON candidate parse hatası: {str(e)}")
+                    continue
+            
+            # Hiçbiri işe yaramadıysa fallback
+            logger.warning("⚠️ Geçerli trip options JSON bulunamadı, fallback oluşturuluyor")
+            return self._create_fallback_trip_options(prompt_data)
             
         except Exception as e:
-            logger.error(f"❌ Kamp bilgisi çıkarma hatası: {str(e)}")
-            return [{
-                "day": 1,
-                "date": trip_data['start_date'],
-                "location": {
-                    "name": "Varsayılan Kamp Alanı",
-                    "address": f"{trip_data['start_position']} yakını",
-                    "site_url": "",
-                    "latitude": 39.0,
-                    "longitude": 35.0
-                }
-            }]
+            logger.error(f"❌ JSON extraction hatası: {str(e)}")
+            return self._create_fallback_trip_options(prompt_data)
 
-    def _parse_camp_text(self, camp_text: str) -> Dict:
-        """Tek bir kamp metnini parse et"""
-        camp_info = {
-            'name': 'Bilinmeyen Camping',
-            'address': 'Adres bilgisi yok',
-            'site_url': '',
-            'latitude': 39.0,
-            'longitude': 35.0
-        }
+    def _clean_json_string(self, json_str: str) -> str:
+        """JSON string'i temizle"""
+        # Başındaki ve sonundaki whitespace'leri temizle
+        json_str = json_str.strip()
         
-        lines = camp_text.split('\n')
-        for line in lines:
-            line = line.strip()
-            if ':' in line:
-                key, value = line.split(':', 1)
-                key = key.strip().lower().replace('-', '').strip()
-                value = value.strip()
-                
-                if 'isim' in key or 'i̇sim' in key or 'name' in key:
-                    camp_info['name'] = value
-                elif 'adres' in key or 'address' in key:
-                    camp_info['address'] = value
-                elif 'web' in key or 'site' in key or 'url' in key:
-                    camp_info['site_url'] = value
-                elif 'latitude' in key or 'lat' in key:
-                    try:
-                        camp_info['latitude'] = float(value)
-                    except:
-                        pass
-                elif 'longitude' in key or 'lng' in key or 'lon' in key:
-                    try:
-                        camp_info['longitude'] = float(value)
-                    except:
-                        pass
+        # Escape karakterleri düzelt
+        json_str = json_str.replace('\\"', '"')
+        json_str = json_str.replace("\\n", "\n")
+        json_str = json_str.replace("\\t", "\t")
         
-        return camp_info
+        # Trailing comma'ları temizle
+        json_str = re.sub(r',\s*}', '}', json_str)
+        json_str = re.sub(r',\s*]', ']', json_str)
+        
+        return json_str
 
-    def _create_daily_plan_from_camp(self, camp_info: Dict, day: int, trip_data: Dict) -> Dict:
-        """Kamp bilgisinden daily plan oluştur"""
-        # Tarihi hesapla
-        start_date = datetime.strptime(trip_data['start_date'], "%Y-%m-%d")
-        current_date = start_date + timedelta(days=day - 1)
-        
-        return {
-            "day": day,
-            "date": current_date.strftime("%Y-%m-%d"),
-            "location": {
-                "name": camp_info.get('name', f'Camping {day}'),
-                "address": camp_info.get('address', 'Adres bilgisi yok'),
-                "site_url": camp_info.get('site_url', ''),
-                "latitude": camp_info.get('latitude', 39.0),
-                "longitude": camp_info.get('longitude', 35.0)
-            }
-        }
-
-    def _create_fallback_json(self, trip_data: Dict) -> str:
-        """Fallback JSON oluştur"""
+    def _validate_trip_options_structure(self, data: Dict) -> bool:
+        """Trip options JSON yapısını validate et"""
         try:
-            start_date = datetime.strptime(trip_data['start_date'], "%Y-%m-%d")
-            end_date = datetime.strptime(trip_data['end_date'], "%Y-%m-%d")
+            # Temel yapıyı kontrol et
+            if not isinstance(data, dict):
+                logger.error("❌ Data dict değil")
+                return False
+                
+            if 'trip_options' not in data:
+                logger.error("❌ trip_options key'i bulunamadı")
+                return False
+                
+            trip_options = data['trip_options']
+            
+            # Trip options array kontrolü
+            if not isinstance(trip_options, list):
+                logger.error("❌ trip_options list değil")
+                return False
+                
+            if len(trip_options) != 3:
+                logger.error(f"❌ Trip options sayısı 3 değil: {len(trip_options)}")
+                return False
+            
+            # Her trip option'ı validate et
+            for i, option in enumerate(trip_options):
+                if not isinstance(option, dict):
+                    logger.error(f"❌ Trip option {i} dict değil")
+                    return False
+                    
+                # Gerekli alanları kontrol et
+                required_option_fields = ['theme', 'description', 'trip', 'daily_plan']
+                for field in required_option_fields:
+                    if field not in option:
+                        logger.error(f"❌ Trip option {i} içinde {field} yok")
+                        return False
+                
+                # Trip validasyonu
+                trip = option['trip']
+                if not isinstance(trip, dict):
+                    logger.error(f"❌ Trip {i} dict değil")
+                    return False
+                    
+                required_trip_fields = ['user_id', 'name', 'description', 'start_position', 
+                                      'end_position', 'start_date', 'end_date', 'total_days']
+                for field in required_trip_fields:
+                    if field not in trip:
+                        logger.error(f"❌ Trip {i} içinde {field} yok")
+                        return False
+                
+                # Daily plan validasyonu
+                daily_plan = option['daily_plan']
+                if not isinstance(daily_plan, list):
+                    logger.error(f"❌ Daily plan {i} list değil")
+                    return False
+                    
+                if len(daily_plan) == 0:
+                    logger.error(f"❌ Daily plan {i} boş")
+                    return False
+                    
+                for j, day in enumerate(daily_plan):
+                    if not isinstance(day, dict):
+                        logger.error(f"❌ Daily plan {i}.{j} dict değil")
+                        return False
+                    if 'day' not in day or 'date' not in day or 'location' not in day:
+                        logger.error(f"❌ Daily plan {i}.{j} içinde gerekli alanlar yok")
+                        return False
+                        
+                    location = day['location']
+                    if not isinstance(location, dict):
+                        logger.error(f"❌ Location {i}.{j} dict değil")
+                        return False
+                    if 'name' not in location or 'address' not in location:
+                        logger.error(f"❌ Location {i}.{j} içinde name/address yok")
+                        return False
+            
+            logger.info("✅ Trip options yapısı geçerli")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Trip options validation hatası: {str(e)}")
+            return False
+
+    def _create_fallback_trip_options(self, prompt_data: Dict[str, Any]) -> str:
+        """Hata durumunda fallback trip options JSON oluştur"""
+        try:
+            # Tarih hesaplamaları
+            start_date = datetime.strptime(prompt_data['start_date'], "%Y-%m-%d")
+            end_date = datetime.strptime(prompt_data['end_date'], "%Y-%m-%d")
             total_days = (end_date - start_date).days + 1
-        except:
-            total_days = 3
-        
-        fallback_data = {
-            "trip_options": [
+            
+            # 3 tema oluştur
+            themes = [
                 {
                     "theme": "Doğal Güzellikler Rotası",
                     "description": "Göller, şelaleler ve ormanlık alanlar gibi doğal harikaları keşfeden bir rota.",
-                    "trip": {
-                        "user_id": trip_data['user_id'],
-                        "name": f"{trip_data['name']} - Doğal Güzellikler Rotası",
-                        "description": trip_data['description'],
-                        "start_position": trip_data['start_position'],
-                        "end_position": trip_data['end_position'],
-                        "start_date": trip_data['start_date'],
-                        "end_date": trip_data['end_date'],
-                        "total_days": total_days
-                    },
-                    "daily_plan": [{
-                        "day": 1,
-                        "date": trip_data.get('start_date', '2024-01-01'),
-                        "location": {
-                            "name": "Varsayılan Doğal Kamp Alanı",
-                            "address": f"{trip_data['start_position']} yakını doğal kamp alanı",
-                            "site_url": "",
-                            "latitude": 39.0,
-                            "longitude": 35.0
-                        }
-                    }]
                 },
                 {
-                    "theme": "Tarihi Güzellikler Rotası",
+                    "theme": "Tarihi Güzellikler Rotası", 
                     "description": "Antik kentler, kaleler ve tarihi yapılar gibi kültürel mirasları barındıran bir rota.",
-                    "trip": {
-                        "user_id": trip_data['user_id'],
-                        "name": f"{trip_data['name']} - Tarihi Güzellikler Rotası",
-                        "description": trip_data['description'],
-                        "start_position": trip_data['start_position'],
-                        "end_position": trip_data['end_position'],
-                        "start_date": trip_data['start_date'],
-                        "end_date": trip_data['end_date'],
-                        "total_days": total_days
-                    },
-                    "daily_plan": [{
-                        "day": 1,
-                        "date": trip_data.get('start_date', '2024-01-01'),
-                        "location": {
-                            "name": "Varsayılan Tarihi Kamp Alanı",
-                            "address": f"{trip_data['start_position']} yakını tarihi kamp alanı",
-                            "site_url": "",
-                            "latitude": 39.1,
-                            "longitude": 35.1
-                        }
-                    }]
                 },
                 {
                     "theme": "Macera ve Aksiyon Rotası",
                     "description": "Dağcılık, rafting, yamaç paraşütü gibi aktivitelere uygun kamp alanlarını içeren bir rota.",
-                    "trip": {
-                        "user_id": trip_data['user_id'],
-                        "name": f"{trip_data['name']} - Macera ve Aksiyon Rotası",
-                        "description": trip_data['description'],
-                        "start_position": trip_data['start_position'],
-                        "end_position": trip_data['end_position'],
-                        "start_date": trip_data['start_date'],
-                        "end_date": trip_data['end_date'],
-                        "total_days": total_days
-                    },
-                    "daily_plan": [{
-                        "day": 1,
-                        "date": trip_data.get('start_date', '2024-01-01'),
-                        "location": {
-                            "name": "Varsayılan Macera Kamp Alanı",
-                            "address": f"{trip_data['start_position']} yakını macera kamp alanı",
-                            "site_url": "",
-                            "latitude": 39.2,
-                            "longitude": 35.2
-                        }
-                    }]
                 }
             ]
-        }
-        
-        return json.dumps(fallback_data, ensure_ascii=False, indent=2)
-
-# Ana AI Agent sınıfını güncelle
-class ai_agent:
-    def __init__(self):
-        """Multi-Agent AI sistemi başlat"""
-        self.main_agent = MainTripPlannerAgent()
-        logger.info("✅ Multi-Agent AI sistemi başarıyla oluşturuldu")
-        
-    def generate_trip_plan(self, prompt_data: Dict[str, Any]) -> str:
-        """
-        Multi-agent sistemle seyahat planı oluştur
-        """
-        logger.info("🎯 Multi-Agent sistem başlatıldı")
-        return self.main_agent.generate_trip_plan(prompt_data)
+            
+            trip_options = []
+            
+            for i, theme_info in enumerate(themes):
+                # Günlük planlar oluştur
+                daily_plans = []
+                for day in range(min(3, total_days)):  # Maksimum 3 gün göster
+                    current_date = start_date + timedelta(days=day)
+                    
+                    daily_plans.append({
+                        "day": day + 1,
+                        "date": current_date.strftime("%Y-%m-%d"),
+                        "location": {
+                            "name": f"{theme_info['theme'].split()[0]} Kamp Alanı {day + 1}",
+                            "address": f"{prompt_data['start_position']} yakını {theme_info['theme'].lower()} temalı kamp alanı",
+                            "site_url": "",
+                            "latitude": 39.0 + (i * 0.1) + (day * 0.05),
+                            "longitude": 35.0 + (i * 0.1) + (day * 0.05),
+                        }
+                    })
+                
+                # Trip option oluştur
+                trip_option = {
+                    "theme": theme_info["theme"],
+                    "description": theme_info["description"],
+                    "trip": {
+                        "user_id": prompt_data['user_id'],
+                        "name": f"{theme_info['theme']} - {prompt_data['name']}",
+                        "description": prompt_data['description'],
+                        "start_position": prompt_data['start_position'],
+                        "end_position": prompt_data['end_position'],
+                        "start_date": prompt_data['start_date'],
+                        "end_date": prompt_data['end_date'],
+                        "total_days": total_days
+                    },
+                    "daily_plan": daily_plans
+                }
+                
+                trip_options.append(trip_option)
+            
+            fallback_data = {
+                "trip_options": trip_options
+            }
+            
+            logger.info("🔧 Fallback trip options JSON oluşturuldu")
+            return json.dumps(fallback_data, ensure_ascii=False, indent=2)
+            
+        except Exception as e:
+            logger.error(f"❌ Fallback trip options oluşturma hatası: {str(e)}")
+            # En basit fallback - hata durumunda bile çalışacak
+            simple_fallback = {
+                "trip_options": [
+                    {
+                        "theme": "Doğal Güzellikler Rotası",
+                        "description": "Doğal güzellikleri keşfeden bir rota",
+                        "trip": {
+                            "user_id": prompt_data.get('user_id', ''),
+                            "name": f"Doğal Güzellikler - {prompt_data.get('name', 'Kamp Rotası')}",
+                            "description": prompt_data.get('description', 'Plan oluşturulamadı'),
+                            "start_position": prompt_data.get('start_position', ''),
+                            "end_position": prompt_data.get('end_position', ''),
+                            "start_date": prompt_data.get('start_date', ''),
+                            "end_date": prompt_data.get('end_date', ''),
+                            "total_days": 1
+                        },
+                        "daily_plan": [{
+                            "day": 1,
+                            "date": prompt_data.get('start_date', '2024-01-01'),
+                            "location": {
+                                "name": "Doğal Kamp Alanı",
+                                "address": "Adres bilgisi mevcut değil",
+                                "site_url": "",
+                                "latitude": 39.0,
+                                "longitude": 35.0,
+                            }
+                        }]
+                    },
+                    {
+                        "theme": "Tarihi Güzellikler Rotası",
+                        "description": "Tarihi güzellikleri keşfeden bir rota",
+                        "trip": {
+                            "user_id": prompt_data.get('user_id', ''),
+                            "name": f"Tarihi Güzellikler - {prompt_data.get('name', 'Kamp Rotası')}",
+                            "description": prompt_data.get('description', 'Plan oluşturulamadı'),
+                            "start_position": prompt_data.get('start_position', ''),
+                            "end_position": prompt_data.get('end_position', ''),
+                            "start_date": prompt_data.get('start_date', ''),
+                            "end_date": prompt_data.get('end_date', ''),
+                            "total_days": 1
+                        },
+                        "daily_plan": [{
+                            "day": 1,
+                            "date": prompt_data.get('start_date', '2024-01-01'),
+                            "location": {
+                                "name": "Tarihi Kamp Alanı",
+                                "address": "Adres bilgisi mevcut değil",
+                                "site_url": "",
+                                "latitude": 39.1,
+                                "longitude": 35.1,
+                            }
+                        }]
+                    },
+                    {
+                        "theme": "Macera ve Aksiyon Rotası",
+                        "description": "Macera aktivitelerini içeren bir rota",
+                        "trip": {
+                            "user_id": prompt_data.get('user_id', ''),
+                            "name": f"Macera Rotası - {prompt_data.get('name', 'Kamp Rotası')}",
+                            "description": prompt_data.get('description', 'Plan oluşturulamadı'),
+                            "start_position": prompt_data.get('start_position', ''),
+                            "end_position": prompt_data.get('end_position', ''),
+                            "start_date": prompt_data.get('start_date', ''),
+                            "end_date": prompt_data.get('end_date', ''),
+                            "total_days": 1
+                        },
+                        "daily_plan": [{
+                            "day": 1,
+                            "date": prompt_data.get('start_date', '2024-01-01'),
+                            "location": {
+                                "name": "Macera Kamp Alanı",
+                                "address": "Adres bilgisi mevcut değil",
+                                "site_url": "",
+                                "latitude": 39.2,
+                                "longitude": 35.2,
+                            }
+                        }]
+                    }
+                ]
+            }
+            return json.dumps(simple_fallback, ensure_ascii=False, indent=2)
